@@ -1,0 +1,11 @@
+#
+# Bluetooth
+#
+CONFIG_BT_ENABLED=y
+
+#
+# iBeacon Configuration
+#
+#CONFIG_IBEACON_SENDER=y
+#CONFIG_IBEACON_RECEIVER=n
+#CONFIG_IBEACON_MODE=0
