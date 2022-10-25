@@ -10,5 +10,12 @@
     ],
     "idf.port": "/dev/ttyUSB0",
     "idf.pythonBinPath": "${env:HOME}/.espressif/python_env/idf4.4_py3.9_env/bin/python",
-    "idf.toolsPath": "${env:HOME}/.espressif"
+    "idf.toolsPath": "${env:HOME}/.espressif",
+    "files.associations": {
+        "sdkconfig.h": "c",
+        "bt_controller.h": "c",
+        "esp_gatt_defs.h": "c",
+        "esp_gatts_api.h": "c",
+        "esp_bt_main.h": "c"
+    }
 }
