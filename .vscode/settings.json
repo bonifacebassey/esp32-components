@@ -11,5 +11,6 @@
         "esp_gatt_defs.h": "c",
         "esp_gatts_api.h": "c",
         "esp_bt_main.h": "c"
-    }
+    },
+    "editor.formatOnSave": true
 }

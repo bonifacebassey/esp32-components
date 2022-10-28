@@ -17,12 +17,18 @@
 #include "ble_gatts_table.h"
 
 #define PROFILE_NUM 1
-#define PROFILE_APP_ID 0
+#define PROFILE_APP_IDX 0
 #define APPLICATION_ID 0x55
+#define SVC_INST_ID 0
 #define PREPARE_BUF_MAX_SIZE 1024
+
+#define DEFAULT_CHAR_MTU 20
+#define MAXIMUM_CHAR_MTU 500
+#define ATT_MTU_3 3
+volatile uint16_t char_mtu_size = DEFAULT_CHAR_MTU;
+
 #define ADV_CONFIG_FLAG (1 << 0)
 #define SCAN_RSP_CONFIG_FLAG (1 << 1)
-#define MTU_SIZE 500
 
 static const char *TAG = "ble_gattserver";
 
@@ -30,10 +36,11 @@ bool allow_pairing = false;
 static volatile bool sending_busy = false;
 static volatile bool notify_enabled = false;
 static volatile bool is_connected = false;
+connection_interval_t conn_interval = FAST;
 
 static uint8_t adv_config_done = 0;
 static uint16_t gatts_attr_table[IDX_ATTR_IDX_NUM];
-uint8_t receive_buffer[MTU_SIZE];
+uint8_t receive_buffer[MAXIMUM_CHAR_MTU];
 
 static esp_err_t set_device_name(const char *name);
 static esp_err_t set_security_parameters(bool validate);
@@ -41,13 +48,20 @@ static void ble_gatts_callback(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_i
 static void ble_gap_callback(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param);
 static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
 
+typedef struct
+{
+    uint8_t *prepare_buf;
+    int prepare_len;
+} prepare_type_env_t;
+prepare_type_env_t prepare_write_env;
+
 static uint8_t adv_service_uuid[16] = {
     /* LSB <--------------------------------------------------------------------------------> MSB */
     // first uuid, 16bit, [12],[13] is the value
     0x55, 0xE4, 0x05, 0xD2, 0xAF, 0x9F, 0xA9, 0x8F, 0xE5, 0x4A, 0x7D, 0x00, 0xBB, 0x00, 0x00, 0x00};
 
 #define MANUFACTURER_DATA_LEN 15
-static uint8_t manufacturer_data[MANUFACTURER_DATA_LEN] = {'M', 'O', 'R', 'I', 'T'};
+static uint8_t manufacturer_data[MANUFACTURER_DATA_LEN] = {'D', 'O', 'R', 'I', 'T'};
 
 esp_ble_adv_data_t advertisement_data = {
     .set_scan_rsp = false,
@@ -83,19 +97,13 @@ esp_ble_adv_params_t advertisement_param = {
     .adv_filter_policy = ADV_FILTER_ALLOW_SCAN_ANY_CON_ANY,
 };
 
-typedef struct
-{
-    uint8_t *prepare_buf;
-    int prepare_len;
-} prepare_type_env_t;
-prepare_type_env_t prepare_write_env;
-
 struct gatts_profile_inst
 {
     esp_gatts_cb_t gatts_cb;
     uint16_t gatts_if;
     uint16_t app_id;
     uint16_t conn_id;
+    esp_bd_addr_t client_address;
     uint16_t service_handle;
     esp_gatt_srvc_id_t service_id;
     uint16_t char_handle;
@@ -109,18 +117,20 @@ struct gatts_profile_inst
 // This is our gatts application profile
 // One gatt-based profile one app_id and one gatts_if, this array will store the gatts_if returned by ESP_GATTS_REG_EVT
 static struct gatts_profile_inst profile_table[PROFILE_NUM] = {
-    [PROFILE_APP_ID] = {
+    [PROFILE_APP_IDX] = {
         .gatts_cb = gatts_profile_event_handler,
         .gatts_if = ESP_GATT_IF_NONE, /* Not get the gatt_if, so initial is ESP_GATT_IF_NONE */
     },
 };
 
-esp_err_t ble_start(const char *name, bool validate, power_level_t power_level)
+esp_err_t ble_start(const char *name, bool with_pin, power_level_t power_level, connection_interval_t c_interval)
 {
     esp_err_t ret = ESP_FAIL;
 
     do
     {
+        conn_interval = c_interval;
+
         esp_err_t ret = nvs_flash_init();
         if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND)
         {
@@ -191,14 +201,14 @@ esp_err_t ble_start(const char *name, bool validate, power_level_t power_level)
             break;
         }
 
-        ret = esp_ble_gatt_set_local_mtu(MTU_SIZE);
+        ret = esp_ble_gatt_set_local_mtu(MAXIMUM_CHAR_MTU + ATT_MTU_3);
         if (ret != ESP_OK)
         {
             ESP_LOGE(TAG, "set local  MTU failed");
             break;
         }
 
-        ret = set_security_parameters(validate);
+        ret = set_security_parameters(with_pin);
         if (ret != ESP_OK)
         {
             ESP_LOGE(TAG, "set security params failed");
@@ -216,7 +226,7 @@ esp_err_t ble_stop()
 
     do
     {
-        ret = esp_ble_gatts_app_unregister(profile_table[PROFILE_APP_ID].gatts_if);
+        ret = esp_ble_gatts_app_unregister(profile_table[PROFILE_APP_IDX].gatts_if);
         if (ret != ESP_OK)
         {
             ESP_LOGE(TAG, "unregister application failed");
@@ -248,7 +258,7 @@ esp_err_t ble_stop()
     return ret;
 }
 
-esp_err_t ble_start_pairing(const char *name, bool validate)
+esp_err_t ble_start_pairing(const char *name, bool with_pin)
 {
     esp_err_t ret = ESP_FAIL;
 
@@ -263,7 +273,7 @@ esp_err_t ble_start_pairing(const char *name, bool validate)
             break;
         }
 
-        esp_ble_io_cap_t iocap = validate ? ESP_IO_CAP_IO : ESP_IO_CAP_NONE;
+        esp_ble_io_cap_t iocap = with_pin ? ESP_IO_CAP_IO : ESP_IO_CAP_NONE;
         ret = esp_ble_gap_set_security_param(ESP_BLE_SM_IOCAP_MODE, &iocap, sizeof(uint8_t));
         if (ret != ESP_OK)
         {
@@ -343,15 +353,28 @@ esp_err_t ble_clear_paired_devices()
 
 esp_err_t ble_send(uint8_t *data, size_t size)
 {
-    // need-confirm ->
-    // yes=indicate (i.e send with ACK) slower
-    // no=notify (i.e fire and forget) faster
-    esp_ble_gatts_send_indicate(profile_table[PROFILE_APP_ID].gatts_if, profile_table[PROFILE_APP_ID].conn_id,
-                                profile_table[PROFILE_APP_ID].char_handle, sizeof(data), data, false);
+    do
+    {
+        while (sending_busy)
+        {
+            vTaskDelay(100 / portTICK_PERIOD_MS);
+        }
+        sending_busy = true;
 
-    // esp_ble_gatts_send_indicate(MMS_profile_tab[PROFILE_APP_IDX].gatts_if, connection.Value(),
-    //                             MMS_gatts_attr_table[MMS_CHAR_VAL_READ], data.size(), const_cast<std::uint8_t *>(data.data()),
-    //                             true);
+        esp_ble_gatts_set_attr_value(gatts_attr_table[IDX_CHAR_VAL_READ_WRITE], size, data);
+
+        // need-confirm ->
+        // yes=indicate (i.e send with ACK) slower
+        // no=notify (i.e fire and forget) faster
+        esp_ble_gatts_send_indicate(profile_table[PROFILE_APP_IDX].gatts_if, profile_table[PROFILE_APP_IDX].conn_id,
+                                    profile_table[PROFILE_APP_IDX].char_handle, sizeof(data), data, false);
+
+        // esp_ble_gatts_send_indicate(MMS_profile_tab[PROFILE_APP_IDXX].gatts_if, connection.Value(),
+        //                             MMS_gatts_attr_table[MMS_CHAR_VAL_READ], data.size(), const_cast<std::uint8_t *>(data.data()),
+        //                             true);
+
+    } while (false);
+
     return ESP_OK;
 }
 
@@ -370,6 +393,45 @@ esp_err_t ble_receive(esp_gatt_if_t gatts_if, uint8_t handle, uint16_t conn_id, 
     return ESP_OK;
 }
 
+esp_err_t update_connection_parameters(connection_interval_t conn_interval)
+{
+    esp_ble_conn_update_params_t conn_params;
+    memcpy(conn_params.bda, profile_table[PROFILE_APP_IDX].client_address, sizeof(esp_bd_addr_t));
+    conn_params.min_int = 0x0006;
+    conn_params.max_int = 0x000C;
+    conn_params.latency = 0;
+    conn_params.timeout = 400; // timeout = timeout * 10ms = 4000ms
+    esp_log_buffer_hex("ble_gattserver: update conn_params for", profile_table[PROFILE_APP_IDX].client_address, sizeof(esp_bd_addr_t));
+
+    switch (conn_interval)
+    {
+    // interval = min|max interval * 1.25ms
+    case FAST: // 7 - 15 ms
+        conn_params.min_int = 0x0006;
+        conn_params.max_int = 0x000C;
+        break;
+
+    case FASTER: // 30 - 50 ms
+        conn_params.min_int = 0x0018;
+        conn_params.max_int = 0x0028;
+        break;
+
+    case SLOW: // 100 - 125 ms
+        conn_params.min_int = 0x0050;
+        conn_params.max_int = 0x0064;
+        break;
+
+    case SLOWER: // 3s
+        conn_params.min_int = 0x0960;
+        conn_params.max_int = 0x0960;
+        break;
+
+    default:
+        break;
+    }
+
+    return esp_ble_gap_update_conn_params(&conn_params);
+}
 static void ble_show_paired_devices(void)
 {
     int dev_num = esp_ble_get_bond_device_num();
@@ -414,13 +476,13 @@ static esp_err_t set_device_name(const char *name)
     return ret;
 }
 
-static esp_err_t set_security_parameters(bool validate)
+static esp_err_t set_security_parameters(bool with_pin)
 {
     esp_err_t ret = ESP_FAIL;
 
     do
     {
-        esp_ble_io_cap_t iocap = validate ? ESP_IO_CAP_IO : ESP_IO_CAP_NONE;
+        esp_ble_io_cap_t iocap = with_pin ? ESP_IO_CAP_IO : ESP_IO_CAP_NONE;
         esp_ble_auth_req_t auth_req = ESP_LE_AUTH_REQ_SC_MITM_BOND;
         uint8_t key_size = 16;
         uint8_t init_key = (ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
@@ -466,11 +528,12 @@ static esp_err_t set_security_parameters(bool validate)
     return ret;
 }
 
+// data is received from client - process it here
 static void on_data_received(uint8_t *received_data, uint16_t data_size)
 {
     ESP_LOGI(TAG, "data received from client: %d", data_size);
     esp_log_buffer_hex(TAG, received_data, data_size);
-    if (data_size < MTU_SIZE)
+    if (data_size < MAXIMUM_CHAR_MTU)
     {
         memset(receive_buffer, 0, sizeof(receive_buffer));
         memcpy(receive_buffer, received_data, data_size);
@@ -484,7 +547,7 @@ static void ble_gatts_callback(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_i
     {
         if (param->reg.status == ESP_GATT_OK)
         {
-            profile_table[PROFILE_APP_ID].gatts_if = gatts_if;
+            profile_table[PROFILE_APP_IDX].gatts_if = gatts_if;
         }
         else
         {
@@ -561,6 +624,7 @@ static void ble_gap_callback(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_
     case ESP_GAP_BLE_NC_REQ_EVT:
         if (allow_pairing)
         {
+            memcpy(profile_table[PROFILE_APP_IDX].client_address, param->ble_security.ble_req.bd_addr, sizeof(esp_bd_addr_t));
             esp_ble_confirm_reply(param->ble_security.ble_req.bd_addr, true);
             ESP_LOGI(TAG, "ESP_GAP_BLE_NC_REQ_EVT, the passkey Notify number:%d", param->ble_security.key_notif.passkey);
         }
@@ -588,7 +652,7 @@ static void ble_gap_callback(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_
             break;
         }
         ESP_LOGI(TAG, "ESP_GAP_BLE_PASSKEY_REQ_EVT");
-        // esp_ble_passkey_reply(MMS_gatts_attr_table[PROFILE_APP_ID].remote_bda, true, 0x00); // to input the passkey displayed on the remote device
+        esp_ble_passkey_reply(profile_table[PROFILE_APP_IDX].client_address, true, 0x00); // to input the passkey displayed on the remote device
         break;
 
     case ESP_GAP_BLE_SEC_REQ_EVT:
@@ -758,15 +822,15 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
     switch (event)
     {
     case ESP_GATTS_REG_EVT:
-        profile_table[PROFILE_APP_ID].service_id.is_primary = true;
-        profile_table[PROFILE_APP_ID].service_id.id.inst_id = 0x00;
-        profile_table[PROFILE_APP_ID].service_id.id.uuid.len = ESP_UUID_LEN_16;
-        profile_table[PROFILE_APP_ID].service_id.id.uuid.uuid.uuid16 = SERVICE_UUID;
-        profile_table[PROFILE_APP_ID].gatts_if = gatts_if;
+        profile_table[PROFILE_APP_IDX].service_id.is_primary = true;
+        profile_table[PROFILE_APP_IDX].service_id.id.inst_id = 0x00;
+        profile_table[PROFILE_APP_IDX].service_id.id.uuid.len = ESP_UUID_LEN_16;
+        profile_table[PROFILE_APP_IDX].service_id.id.uuid.uuid.uuid16 = SERVICE_UUID;
+        profile_table[PROFILE_APP_IDX].gatts_if = gatts_if;
 
         esp_ble_gap_config_local_privacy(true);
 
-        if (esp_ble_gatts_create_attr_tab(gatts_attr_database, gatts_if, IDX_ATTR_IDX_NUM, 0) != ESP_OK)
+        if (esp_ble_gatts_create_attr_tab(gatts_attr_database, gatts_if, IDX_ATTR_IDX_NUM, SVC_INST_ID) != ESP_OK)
             ESP_LOGE(TAG, "create_attribute_table failed");
         break;
 
@@ -837,20 +901,16 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
 
     case ESP_GATTS_CONNECT_EVT:
     {
+        char_mtu_size = DEFAULT_CHAR_MTU;
+        esp_log_buffer_hex("ble_gattserver: ESP_GATTS_CONNECT_EVT. remote address", param->connect.remote_bda, sizeof(esp_bd_addr_t));
         esp_ble_set_encryption(param->connect.remote_bda, ESP_BLE_SEC_ENCRYPT_MITM);
 
-        esp_ble_conn_update_params_t conn_params;
-        memcpy(conn_params.bda, param->connect.remote_bda, sizeof(esp_bd_addr_t));
-        conn_params.min_int = 0x0006; // min_int = 0x10*1.25ms = 20ms
-        conn_params.max_int = 0x000C; // max_int = 0x20*1.25ms = 40ms
-        conn_params.latency = 0;
-        conn_params.timeout = 400;                    // timeout = 400*10ms = 4000ms
-        esp_ble_gap_update_conn_params(&conn_params); // start sent the update connection parameters to the peer device.
+        update_connection_parameters(conn_interval);
 
         ESP_LOGI(TAG, "ESP_GATTS_CONNECT_EVT, conn_id = %d", param->connect.conn_id);
         esp_log_buffer_hex(TAG, param->connect.remote_bda, ESP_BD_ADDR_LEN);
 
-        profile_table[PROFILE_APP_ID].conn_id = param->connect.conn_id;
+        profile_table[PROFILE_APP_IDX].conn_id = param->connect.conn_id;
         is_connected = true;
         break;
     }
@@ -879,6 +939,11 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
         }
         break;
     }
+
+    case ESP_GATTS_MTU_EVT:
+        char_mtu_size = (param->mtu.mtu > MAXIMUM_CHAR_MTU) ? MAXIMUM_CHAR_MTU : param->mtu.mtu - ATT_MTU_3;
+        ESP_LOGI(TAG, "onRequestMTUChange conn_id = %d, mtu_size = %d", param->mtu.conn_id, char_mtu_size);
+        break;
 
     case ESP_GATTS_CONGEST_EVT:
         ESP_LOGW(TAG, "congestion = %d", param->congest.congested);
