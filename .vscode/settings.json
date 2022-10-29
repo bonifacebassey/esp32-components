@@ -10,7 +10,10 @@
         "bt_controller.h": "c",
         "esp_gatt_defs.h": "c",
         "esp_gatts_api.h": "c",
-        "esp_bt_main.h": "c"
+        "esp_bt_main.h": "c",
+        "btc_ble_storage.h": "c"
     },
-    "editor.formatOnSave": true
+    "editor.formatOnSave": true,
+    "idf.flashType": "UART",
+    "idf.port": "/dev/ttyUSB0"
 }
