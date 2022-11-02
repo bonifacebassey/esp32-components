@@ -5,8 +5,8 @@
 
 #include "esp_log.h"
 #include "esp_wifi.h"
-#include "wlan.h"
-#include "wlan_station.h"
+#include "wiFi.h"
+#include "wiFi_station.h"
 
 static EventGroupHandle_t s_wifi_event_group;
 
@@ -14,15 +14,15 @@ static EventGroupHandle_t s_wifi_event_group;
 #define WIFI_FAIL_BIT BIT1
 #define ESP_MAXIMUM_RETRY 3
 
-static const char *TAG = "wlanstation";
+static const char *TAG = "wiFi-station";
 static int s_retry_num = 0;
 
 esp_event_handler_instance_t instance_any_id;
 esp_event_handler_instance_t instance_got_ip;
-esp_netif_ip_info_t ip_info;
+esp_netif_ip_info_t ip;
 static esp_netif_t *sta_handle = NULL;
 
-static void wlan_station_event_handle(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data)
+static void wiFi_station_event_handle(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data)
 {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START)
     {
@@ -49,19 +49,19 @@ static void wlan_station_event_handle(void *arg, esp_event_base_t event_base, in
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
         ESP_LOGI(TAG, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
         s_retry_num = 0;
-        ip_info = event->ip_info;
+        ip = event->ip_info;
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
     }
 }
 
-esp_err_t wlan_station_start(const char *ssid, const char *password)
+esp_err_t wifi_init_STATION_mode(const char *ssid, const char *password)
 {
     esp_err_t status = ESP_OK;
     s_wifi_event_group = xEventGroupCreate();
 
     do
     {
-        status = wlan_initialize();
+        status = wiFi_init(WIFI_MODE_STA);
         if (status != ESP_OK)
         {
             ESP_LOGE(TAG, "initialize wifi failed");
@@ -72,7 +72,7 @@ esp_err_t wlan_station_start(const char *ssid, const char *password)
 
         status = esp_event_handler_instance_register(WIFI_EVENT,
                                                      ESP_EVENT_ANY_ID,
-                                                     &wlan_station_event_handle,
+                                                     &wiFi_station_event_handle,
                                                      NULL,
                                                      &instance_any_id);
         if (status != ESP_OK)
@@ -83,19 +83,12 @@ esp_err_t wlan_station_start(const char *ssid, const char *password)
 
         status = esp_event_handler_instance_register(IP_EVENT,
                                                      IP_EVENT_STA_GOT_IP,
-                                                     &wlan_station_event_handle,
+                                                     &wiFi_station_event_handle,
                                                      NULL,
                                                      &instance_got_ip);
         if (status != ESP_OK)
         {
             ESP_LOGE(TAG, "register IP event failed");
-            break;
-        }
-
-        status = esp_wifi_set_mode(WIFI_MODE_STA);
-        if (status != ESP_OK)
-        {
-            ESP_LOGE(TAG, "set wifi STA mode failed");
             break;
         }
 
@@ -136,24 +129,18 @@ esp_err_t wlan_station_start(const char *ssid, const char *password)
 
         if (bits & WIFI_CONNECTED_BIT)
         {
+            status = ESP_OK;
             ESP_LOGI(TAG, "start wlanSTA completed.");
 
-            connection_info_t conn;
-            memcpy(conn.ssid, ssid, strlen(ssid));
-            memcpy(conn.password, password, strlen(password));
-            conn.ipInfo = ip_info;
-            conn.mode = SELECT_STA_MODE;
-            wlan_dump_info(&conn);
-
-            status = ESP_OK;
+            wiFi_print_connction(ssid, password, ip);
         }
         else
         {
-            ESP_LOGI(TAG, "failed to connect to ssid:%s password:%s", ssid, password);
             status = ESP_FAIL;
+            ESP_LOGI(TAG, "failed to connect to ssid:%s password:%s", ssid, password);
 
-            wlan_station_stop();
-            wlan_deinitialize();
+            wifi_deinit_STATION_mode();
+            wiFi_deinit();
         }
 
     } while (false);
@@ -161,20 +148,20 @@ esp_err_t wlan_station_start(const char *ssid, const char *password)
     return status;
 }
 
-esp_err_t wlan_station_stop()
+esp_err_t wifi_deinit_STATION_mode()
 {
     esp_err_t status = ESP_OK;
 
     do
     {
-        status = esp_event_handler_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, &wlan_station_event_handle);
+        status = esp_event_handler_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, &wiFi_station_event_handle);
         if (status != ESP_OK)
         {
             ESP_LOGE(TAG, "unregister wifi event failed");
             break;
         }
 
-        status = esp_event_handler_unregister(IP_EVENT, ESP_EVENT_ANY_ID, &wlan_station_event_handle);
+        status = esp_event_handler_unregister(IP_EVENT, ESP_EVENT_ANY_ID, &wiFi_station_event_handle);
         if (status != ESP_OK)
         {
             ESP_LOGE(TAG, "unregister IP event failed");
