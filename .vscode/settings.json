@@ -11,7 +11,12 @@
         "esp_gatt_defs.h": "c",
         "esp_gatts_api.h": "c",
         "esp_bt_main.h": "c",
-        "btc_ble_storage.h": "c"
+        "btc_ble_storage.h": "c",
+        "esp_crc.h": "c",
+        "esp_now.h": "c",
+        "string.h": "c",
+        "freertos.h": "c",
+        "espnow_receiver.h": "c"
     },
     "editor.formatOnSave": true,
     "idf.flashType": "UART",
