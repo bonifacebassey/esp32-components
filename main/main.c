@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include "uart.h"
 
-static void uart_onDataReceive(uart_cb_param_t param)
+static void uart_onDataReceive(uart_cb_param_t *param)
 {
 }
 void app_main(void)

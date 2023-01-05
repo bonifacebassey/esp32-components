@@ -13,7 +13,7 @@ extern "C"
 
     typedef struct
     {
-        const uint8_t* data;
+        const uint8_t *data;
         size_t size;
     } uart_cb_param_t;
 
@@ -22,7 +22,7 @@ extern "C"
      * @param event         Event type
      * @param data          Point to callback value
      */
-    typedef void (*uart_onDataReceive_cb_t)(uart_cb_param_t* param);
+    typedef void (*uart_onDataReceive_cb_t)(uart_cb_param_t *param);
 
     /**
      * @brief This function is called to register a uart data receive callback
@@ -50,7 +50,7 @@ extern "C"
      * @param dataSize		The data size.
      * @return The number of bytes sent.
      */
-    int uart_send_data(const uint8_t* data, size_t size);
+    int uart_send_data(const uint8_t *data, size_t size);
 
 #ifdef __cplusplus
 }
