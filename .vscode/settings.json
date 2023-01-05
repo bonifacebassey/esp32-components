@@ -16,9 +16,16 @@
         "esp_now.h": "c",
         "string.h": "c",
         "freertos.h": "c",
-        "espnow_receiver.h": "c"
+        "espnow_receiver.h": "c",
+        "array": "c",
+        "vector": "c",
+        "xstring": "c",
+        "xutility": "c",
+        "string": "c",
+        "string_view": "c"
     },
     "editor.formatOnSave": true,
     "idf.flashType": "UART",
-    "idf.port": "/dev/ttyUSB0"
+    "idf.port": "/dev/ttyUSB0",
+    "idf.portWin": "COM6"
 }
